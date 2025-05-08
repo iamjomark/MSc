@@ -1,0 +1,267 @@
+---
+title: "R Final Assignment"
+author: "Jonathan Mark Hamonangan 2949398J EIDAR"
+output: html_document
+---
+
+## **Introduction**
+
+This is a notebook for the processes that are done within R, like plotting and statistical analysis.
+
+Same as the previous R scripts, we prepare the script with packages so the functions will run properly and to be recognized. 
+
+```{r}
+# Reset / clear environment
+rm(list = ls ())
+
+# Load the necessary libraries
+library(lme4)
+library(lmtest)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggeffects)
+```
+
+After resetting and loading the packages needed, we can start by assigning the main data object file and setting the variables. In this case we would like to set *mdr* as a factor, and instead of *0* and *1*, we will change it to *Present* and *Absent* so readers can understand more easily.
+
+```{r}
+# Load the data with the name amr
+amr <- read.csv("AMR_data.csv")
+
+# Convert MDR to a factor with custom labels (0 = Absent, 1 = Present)
+amr$mdr <- factor(amr$mdr, levels = c(0, 1), labels = c("Absent", "Present"))
+
+# Summary statistics of the data
+summary(amr)
+```
+## **Exploratory Visual Analysis**
+
+Now that we have a proper main object file that we can use, we will now be plotting the variables to *mdr* to explore and visualize the data
+
+```{r}
+# Basic ggplot code |
+#-------------------
+# ggplot(data, aes(x = var1, y = var 2, fill = var1,2,etc)) +
+# geom_shape preffered + (aes for the shape etc) *add as needed
+# labs( x = "label for x", y = "label for y", title = "title name") +
+# *additional line of commands like coord_flip, theme, etc.
+
+# Plotting the distribution of MDR as a bar graph
+ggplot(amr, aes(x = mdr, fill = mdr)) + 
+  geom_bar() + # Bar graph
+  labs(x = "MDR") + 
+  theme(legend.position = "none") # the legend will not be shown
+
+# Creating a bar plot of household IDs by MDR status
+ggplot(amr, aes(x = id, fill = mdr)) +
+  geom_bar() + 
+  labs(x = "Household ID", y = "Count") + 
+  theme(axis.text.y = element_text(size = 4)) + # font size for y for visibility
+  theme(legend.position = "none") + 
+  facet_wrap(~mdr) + # seperate plot by mdr presence
+  coord_flip()  # flipping the x to y and vice versa
+  
+# Box plot of antibiotic use by MDR status
+ggplot(amr, aes(x = mdr, y = abruse, fill = mdr)) +
+  geom_boxplot() +
+  labs(x = "MDR", y = "Antibiotic use") +
+  theme(legend.position = "none") # no legend
+
+# Scatter plot of milk consumption by MDR status
+ggplot(amr, aes(x = mdr, y = milk_consume, fill = boil_milk)) +
+  geom_boxplot() +
+  labs(x = "MDR", y = "Milk Consumption") +
+  guides(fill = guide_legend(title = "Boils Milk")) # assigns legend for the fill
+```
+
+We can also combine several plots into 1 to save space and perhaps for some who prefer it that way more.
+
+```{r}
+# %>% or pipe operator chains together multiple operations
+
+# Create a subset of the data with the desired variables
+subset_data <- amr %>% #amr is the data being used 
+  select(mdr, education, diseased_animals_eaten) #selecting the variables of choice
+
+# Melt the data for plotting
+melted_data <- subset_data %>%
+  pivot_longer(cols = c(education, diseased_animals_eaten), names_to = "variable", values_to = "value") # pivot_longer reshapes data where the columns chosen to be made into variable column for the characters, and value column for values
+
+# Create a bar plot with facets and completely custom titles
+ggplot(melted_data, aes(x = mdr, fill = value)) +
+  geom_bar(position = "dodge") +
+  facet_wrap( 
+    ~variable,
+    scales = "free_y", # for different y-axis scales
+    ncol = 2,   # arranges the facets in two columns
+    labeller = labeller( # customizes the labels for the facets
+      variable = c(
+      education = "Education",
+      diseased_animals_eaten = "Diseased Animals Eaten"))
+  ) +
+  labs(x = "Presence of MDR") +
+  theme(legend.position = "top") # legend position to be on the top
+```
+
+## **GLMM**
+
+Having plotted and visually assess the data, we will now do statistical analysis to answer the question *Which, if any, of the characteristics (antibiotic use, infection-related behaviours, etc) of the households are associated with (and therefore potentially risk factors for) MDR?*
+
+The R glmer function, which fits Generalized Linear Mixed Models (GLMMs), is a component of the lme4 package. An expansion of generalized linear models (GLMs) that includes random and fixed effects is called a GLMM. 
+
+```{r}
+# Basic glmer code |
+#-------------------
+# model name <- glmer(
+# response variables ~ response variables + random intercept + chosen interactions,
+# family = "family", data = data used, 
+# control = control parameter(optimizer)
+
+# Define the GLMM model
+model1 <- glmer(
+  mdr ~ abruse + milk_consume + boil_milk + diseased_animals_eaten + education +
+    (1 | id) + education:boil_milk + milk_consume:boil_milk,  # Random intercept for household ID
+  family = binomial,  # Binomial distribution for binary response
+  data = amr,
+  control = glmerControl(optimizer = "bobyqa")
+)
+summary(model1)
+
+model2 <- glmer(
+  mdr ~ milk_consume + boil_milk + diseased_animals_eaten +
+    (1 | id) + milk_consume:boil_milk, 
+  family = binomial, 
+  data = amr,
+  control = glmerControl(optimizer = "bobyqa")
+)
+summary(model2)
+```
+
+R's *lrtest* function performs a likelihood ratio test for nested models. This test compares the fit of two nested models: a complex model and a simpler one that includes additional parameters. The idea is to assess whether the simple model significantly improves the fit compared to the complex model.
+
+```{r}
+# Likelihood ratio test 
+# Compares nested models and assess whether the inclusion of certain terms significantly improves the model fit
+lrtest(model1, model2) 
+
+```
+
+Once the model has been fitted, we can use the summary function to get a model summary that includes z-values, p-values, fixed effect estimates, and standard errors.
+
+```{r}
+# Summarize the chosen model
+summary(model2)
+```
+## **Prediction and Plotting**
+
+Understanding and interpreting a model's behaviour requires using prediction and its charting in statistical analysis. By using observed data, the predictive element enables us to assess the expected outcomes of the model. We can learn more about the relationships between the predictor variables and the response by using plots to visualize these predictions.
+
+```{r}
+# plotting ggpredict |
+#--------------------
+# model name <- ggpredict(model used, terms = c("variables"))
+# plot(model name) + *the following are optional
+# labs (title = "title name", x = "x label", y = "y label", color "color label")
+
+# Predicting the model
+ggpredict(model2)
+
+# Plotting the model prediction
+# Visualizes predictions on the probability of MDR being influenced by milk consumption and boiling
+model2predict1 <- ggpredict(model2, terms = c("milk_consume", "boil_milk"))
+plot(model2predict1) +
+  labs(
+    title = NULL, # removes title
+    x = "Milk Consumption (Liters per Week)",
+    y = "Predicted Probability of MDR",
+    color = "Boils Milk"
+  )
+
+# Visualizes predictions on the probability of MDR being influenced by the consumption of Diseased Animals
+model2predict2 <- ggpredict(model2, terms = c("diseased_animals_eaten"))
+plot(model2predict2) +
+  labs(
+    title = NULL, 
+    x = "Diseased Animals Eaten",
+    y = "Predicted Probability of MDR",
+    fill = "Diseased Animals Eaten"
+  )
+```
+
+## **Odds Ratio**
+
+Having done all of the analysis above, we will now calculate the odds ratio to quantify the impact of each predictor variable on the odds of MDR and to communicate the findings more interpretably. It helps answer questions like "How do the odds of MDR change due to different factors?" and provides a clearer picture for interpretation.
+
+```{r}
+# Calculate confidence intervals for the model
+confint(model2)
+
+# Get coefficients from the model
+model_coefficients <- fixef(model2) #fixef(model2) extracts the fixed-effects coefficients from model2
+
+# Extract relevant coefficients
+# exp() obtains the odds ratios
+# model_coefficients["variable"] extracts the coefficient for the variable
+odds_ratio_diseased_animals <-
+  exp(model_coefficients["diseased_animals_eatenYes"]) 
+odds_ratio_milk_consume <- exp(model_coefficients["milk_consume"])
+odds_ratio_boiled_milk <- exp(model_coefficients["boil_milkYes"])
+odds_ratio_milk_consume_boil_milk <- exp(model_coefficients["milk_consume:boil_milkYes"])
+
+# Odds Ratio for consuming boiled milk
+odds_ratio_milk_consume_boil_milkY <- 8.3*0.191 # Odds ratio milk consumption (non boiled)*boiled
+
+# Print the odds ratios
+cat("Odds Ratio for Eating Diseased Animals:", #prints values of the variable to the console.
+    odds_ratio_diseased_animals)
+cat("Odds Ratio for Consuming Milk:", odds_ratio_milk_consume)
+cat("Odds Ratio for Consuming Boiled Milk:", odds_ratio_boiled_milk)
+cat("Odds Ratio for the interaction between Milk Consumption and Boiling Milk (Yes):", odds_ratio_milk_consume_boil_milk)
+
+
+```
+## **Interpretation**
+
+- Prevalence / Percentage / Average
+  - Prevalence of MDR: 54%
+  - Average consumption of milk (l/week): 3.86
+  - Average use of antibiotics: 3.06
+  - Percentage of education: Yes(1412)(33.7%); No(2774)(66.3%)
+  - Percentage of milk boiling : Yes(2497)(59.7%); No(1689)(40.3%)
+  - Percentage of eating diseased animals: Yes(2447)(41.5%); No(1739)(58.5%)
+
+- Likelihood Ratio Test :
+  - Antibiotic Use:                        0.372
+  - Education:                             0.874
+  - Consumption of milk:                   < 2e-16 ***
+  - Consumption of boiled milk:            0.251    
+  - Consumption of Diseased Animal:        1.84e-06 ***
+  - Interaction of milk and boiled milk:   < 2e-16 ***
+  
+- 95% CI
+  - Consumption of Milk:                              1.81 - 2.45
+  - Consumption of Boiled Milk:                       -0.28 - 1.09
+  - Consumption of Diseased Animal:                   0.38 - 0.93
+  - Interaction of Consonsumption of Milk and Boiling: 0.38 - 0.93
+
+- Odds Ratio :
+  - Consumption of Uncooked Milk  : 8.3
+  - Consumption of Boiled Milk    : 1.6
+  - Consumption of Diseased Animal: 1.93
+
+## **References:**
+
+Haydon, D., & Shaw, D. A pragmatist’s guide to General and Generalised Linear (Mixed) Models and inference (Version 1.2)
+
+Posit. Data visualization with ggplot2 :: Cheat Sheet. https://rstudio.github.io/cheatsheets/html/data-visualization.html
+
+Posit. RStudio IDE :: Cheatsheet. https://rstudio.github.io/cheatsheets/html/rstudio-ide.html
+
+Posit. Data transformation with dplyr :: Cheatsheet. https://rstudio.github.io/cheatsheets/html/data-transformation.html
+
+Posit. Data tidying with tidyr :: Cheatsheet. https://rstudio.github.io/cheatsheets/html/tidyr.html 
+
+Posit. rmarkdown :: Cheatsheet. https://rstudio.github.io/cheatsheets/html/rmarkdown.html
+
+Armstrong, Dave. R By Example::Cheatsheet. https://quantoid.net/files/rbe/cheatsheet_full_draft.pdf
